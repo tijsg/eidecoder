@@ -1,0 +1,124 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Google URL → Timestamp (ei decoder)</title>
+<style>
+:root { --fg: #1f2937; --muted: #6b7280; --ok: #065f46; --bad: #7f1d1d; --bg: #f9fafb; }
+* { box-sizing: border-box; }
+body { font-family: system-ui, -apple-system, Segoe UI, Roboto, Ubuntu, Cantarell, Noto Sans, Arial, "Apple Color Emoji", "Segoe UI Emoji"; color: var(--fg); background: var(--bg); margin: 0; }
+.wrap { max-width: 720px; margin: 0 auto; padding: 2rem 1rem 4rem; }
+h1 { font-size: 1.6rem; margin: 0 0 .5rem; }
+p { color: var(--muted); margin: 0.25rem 0 1rem; }
+.card { background: #fff; border: 1px solid #e5e7eb; border-radius: 14px; padding: 1rem; box-shadow: 0 1px 2px rgba(0,0,0,.05); }
+label { display: block; font-weight: 600; margin-bottom: .5rem; }
+input[type="url"], input[type="text"] { width: 100%; padding: .75rem 1rem; border: 1px solid #d1d5db; border-radius: 10px; font-size: 1rem; }
+input:focus { outline: none; border-color: #6366f1; box-shadow: 0 0 0 3px rgba(99,102,241,.15); }
+.row { display: flex; gap: .5rem; margin-top: .75rem; }
+button { cursor: pointer; border: 1px solid #d1d5db; background: #111827; color: #fff; border-radius: 10px; padding: .65rem 1rem; font-weight: 600; }
+button.secondary { background: #fff; color: #111827; }
+.muted { color: var(--muted); font-size: .9rem; }
+.out { margin-top: 1rem; padding: .75rem 1rem; border: 1px dashed #e5e7eb; border-radius: 10px; background: #fafafa; }
+.mono { font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace; }
+.good { color: var(--ok); }
+.bad { color: var(--bad); }
+.kv { display: grid; grid-template-columns: 170px 1fr; gap: .35rem .75rem; align-items: baseline; }
+.kv div { padding: .1rem 0; }
+footer { margin-top: 2rem; font-size: .9rem; color: var(--muted); }
+.example { font-size: .85rem; }
+</style>
+</head>
+<body>
+<div class="wrap">
+<h1>Extract timestamp from a Google URL</h1>
+<p>Paste a full Google result/search URL. This tool decodes the <span class="mono">ei</span> parameter’s first 4 bytes (little‑endian UNIX seconds) and shows the time.</p>
+
+
+<div class="card">
+<label for="url">Google URL</label>
+<input id="url" type="url" placeholder="https://www.google.com/search?q=…&ei=…" autocomplete="off" spellcheck="false" />
+<div class="row">
+<button id="decodeBtn">Decode</button>
+<button id="clearBtn" class="secondary">Clear</button>
+</div>
+<p class="muted example">Tip: also works if you paste only the <span class="mono">ei</span> value.</p>
+
+
+<div id="output" class="out">
+<div class="muted">Waiting for a URL…</div>
+</div>
+</div>
+
+
+<footer>
+<p>All decoding happens locally in your browser. No data leaves this page.</p>
+</footer>
+</div>
+
+
+<script>
+const $ = (s) => document.querySelector(s);
+const urlInput = $('#url');
+const out = $('#output');
+
+
+function setOut(html, good = false, bad = false) {
+out.innerHTML = html;
+out.classList.toggle('good', good);
+out.classList.toggle('bad', bad);
+}
+
+
+function base64urlToBytes(b64url) {
+if (!b64url) throw new Error('Empty ei value');
+let b64 = b64url.replace(/-/g, '+').replace(/_/g, '/');
+const pad = b64.length % 4;
+if (pad === 2) b64 += '==';
+else if (pad === 3) b64 += '=';
+else if (pad !== 0) throw new Error('Malformed base64');
+const binary = atob(b64);
+const bytes = new Uint8Array(binary.length);
+for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i);
+return bytes;
+}
+
+
+function decodeEi(eiValue) {
+const bytes = base64urlToBytes(eiValue);
+if (bytes.length < 4) throw new Error('ei too short');
+// First 4 bytes = little-endian UNIX seconds
+const ts = (bytes[0] | (bytes[1] << 8) | (bytes[2] << 16) | (bytes[3] << 24)) >>> 0;
+return ts; // seconds since epoch (UTC)
+}
+
+
+function extractEiFromUrl(input) {
+// If they pasted the raw ei token, accept it directly
+if (/^[A-Za-z0-9_-]+$/.test(input) && input.length > 8) return input;
+try {
+const u = new URL(input);
+const ei = u.searchParams.get('ei');
+if (!ei) throw new Error('No ei parameter in URL');
+return ei;
+} catch (e) {
+// Fallback: loose regex
+const m = input.match(/[?&]ei=([^&]+)/);
+if (m) return m[1];
+throw new Error('Invalid URL or missing ei');
+}
+}
+
+
+function formatAll(tsSeconds) {
+const ms = tsSeconds * 1000;
+const d = new Date(ms);
+const pad = (n) => String(n).padStart(2, '0');
+const local = `${pad(d.getDate())}-${pad(d.getMonth()+1)}-${d.getFullYear()} ${pad(d.getHours())}:${pad(d.getMinutes())}:${pad(d.getSeconds())}`;
+const iso = new Date(ms).toISOString();
+return { local, iso, ms, seconds: tsSeconds };
+}
+
+
+function handleDecode() {
+const raw = urlInput.value.trim();
